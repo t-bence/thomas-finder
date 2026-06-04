@@ -2883,6 +2883,7 @@ pipeline = [
 dev = [
     { name = "databricks-vectorsearch" },
     { name = "mlflow-skinny" },
+    { name = "streamlit" },
 ]
 
 [package.metadata]
@@ -2904,6 +2905,7 @@ provides-extras = ["pipeline", "app", "dev"]
 dev = [
     { name = "databricks-vectorsearch", specifier = ">=0.66" },
     { name = "mlflow-skinny", specifier = "==3.0.1" },
+    { name = "streamlit", specifier = ">=1.58.0" },
 ]
 
 [[package]]

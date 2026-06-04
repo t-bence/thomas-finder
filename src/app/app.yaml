@@ -5,16 +5,10 @@ command:
   - run
   - app.py
   - --server.port
-  - "8080"
+  - "8000"
   - --server.headless
   - "true"
 
 env:
-  - name: CATALOG
-    value: "workspace"
-  - name: SCHEMA
-    value: "thomas"
-  - name: VS_ENDPOINT
-    value: "thomas-finder-vs"
-  - name: VS_INDEX
-    value: "workspace.thomas.episode_chunks_index"
+  - name: VECTOR_SEARCH_INDEX
+    valueFrom: vector-search-index

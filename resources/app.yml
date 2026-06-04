@@ -4,3 +4,11 @@ resources:
       name: "thomas-finder-${bundle.target}"
       description: "Thomas episode search — find episodes by story memory"
       source_code_path: ../src/app
+      resources:
+        - name: "vector-search-index"
+          uc_securable:
+            securable_full_name: "${var.catalog}.${var.schema}.episode_chunks_index"
+            permission: SELECT
+            securable_type: TABLE
+
+        

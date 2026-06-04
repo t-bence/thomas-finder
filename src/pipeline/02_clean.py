@@ -14,7 +14,7 @@ from pyspark.sql.functions import col, concat, expr, lit
 
 # --- config ---
 _args = sys.argv[1:]
-CATALOG_SCHEMA = _args[0]   # e.g. "workspace.thomas_dev"
+CATALOG_SCHEMA = _args[0]  # e.g. "workspace.thomas_dev"
 VOLUME_PATH = _args[1]
 SILVER_TABLE = _args[2]
 CLEAN_TABLE = _args[3]
@@ -60,7 +60,8 @@ _PROMPT_PREFIX = (
     "Remove the opening broadcast disclaimer — it typically starts with phrases like "
     "'A következő műsor' or similar Hungarian broadcast text"
     "before the actual story begins. "
-    "Also remove things like or 'A TORONTOS' -- this is probably "
+    "Also remove things like or 'A TORONTOS' -- this is probably English text that was"
+    "misunderstood by the text to speech model."
     "Remove any closing producer credits, copyright notices, or technical information "
     "after the story ends. "
     "Make sure you keep the names in English, such as Thomas, Emily, Gordon, etc. "
@@ -73,16 +74,14 @@ _PROMPT_PREFIX = (
 stream = spark.readStream.table(SILVER_TABLE)
 
 cleaned = (
-    stream
-    .withColumn("_prompt", concat(lit(_PROMPT_PREFIX), col("transcript_text")))
+    stream.withColumn("_prompt", concat(lit(_PROMPT_PREFIX), col("transcript_text")))
     .withColumn("transcript_text", expr(f"ai_query('{CLEAN_MODEL}', _prompt)"))
     .drop("_prompt")
     .select("filename", "series", "episode", "transcript_text", "processed_at")
 )
 
 (
-    cleaned.writeStream
-    .option("checkpointLocation", CLEAN_CHECKPOINT)
+    cleaned.writeStream.option("checkpointLocation", CLEAN_CHECKPOINT)
     .trigger(availableNow=True)
     .toTable(CLEAN_TABLE)
     .awaitTermination()

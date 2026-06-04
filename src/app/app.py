@@ -1,59 +1,33 @@
 import os
 
 import streamlit as st
+from databricks.sdk import WorkspaceClient
 
-CATALOG = os.getenv("CATALOG", "main")
-SCHEMA = os.getenv("SCHEMA", "thomas")
-VS_ENDPOINT = os.getenv("VS_ENDPOINT", "thomas-finder-vs")
-VS_INDEX = os.getenv("VS_INDEX", f"{CATALOG}.{SCHEMA}.episode_chunks_index")
-EMBED_MODEL = "databricks-qwen3-embedding-0-6b"
+VS_INDEX = os.getenv("VECTOR_SEARCH_INDEX")
+if not VS_INDEX:
+    raise ValueError("Missing vector search index")
+
 NUM_RESULTS = 5
 
-
-@st.cache_resource
-def get_vs_index():
-    from databricks.vector_search.client import VectorSearchClient
-
-    vsc = VectorSearchClient(disable_notice=True)
-    return vsc.get_index(VS_ENDPOINT, VS_INDEX)
-
-
-@st.cache_resource
-def get_embed_client():
-    from mlflow.deployments import get_deploy_client
-
-    return get_deploy_client("databricks")
-
-
-def embed_query(text: str) -> list[float]:
-    response = get_embed_client().predict(
-        endpoint=EMBED_MODEL,
-        inputs={"input": [text]},
-    )
-    return response["data"][0]["embedding"]
+w = WorkspaceClient()
 
 
 def search(query: str) -> list[dict]:
-    embedding = embed_query(query)
-    raw = get_vs_index().similarity_search(
-        query_vector=embedding,
-        columns=["filename", "series", "episode", "chunk_text"],
-        num_results=NUM_RESULTS * 3,  # fetch extra to deduplicate per episode
+    results = w.vector_search_indexes.query_index(
+        index_name=VS_INDEX,
+        query_text=query,
+        columns=["filename", "series", "episode", "transcript_text"],
+        num_results=NUM_RESULTS,
     )
-    columns = [c["name"] for c in raw.get("result", {}).get("columns", [])]
-    rows = raw.get("result", {}).get("data_array", [])
-
-    seen: set[tuple] = set()
-    results = []
-    for row in rows:
-        item = dict(zip(columns, row))
-        key = (item["series"], item["episode"])
-        if key not in seen:
-            seen.add(key)
-            results.append(item)
-        if len(results) >= NUM_RESULTS:
-            break
-    return results
+    return [
+        {
+            "filename": item[0],
+            "series": item[1],
+            "episode": item[2],
+            "transcript_text": item[3],
+        }
+        for item in results.result.data_array
+    ]
 
 
 st.set_page_config(page_title="Thomas Kereső", page_icon="🚂", layout="centered")
@@ -82,8 +56,8 @@ if st.button("🔍 Keresés", use_container_width=True, type="primary") and quer
             series = hit.get("series", "?")
             episode = hit.get("episode", "?")
             filename = hit.get("filename", "")
-            snippet = hit.get("chunk_text", "")[:450]
-            if len(hit.get("chunk_text", "")) > 450:
+            snippet = hit.get("transcript_text", "")[:450]
+            if len(hit.get("transcript_text", "")) > 450:
                 snippet += "…"
 
             with st.container(border=True):

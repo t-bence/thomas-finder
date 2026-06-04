@@ -31,4 +31,5 @@ select = ["E", "F", "I"]
 dev = [
     "databricks-vectorsearch>=0.66",
     "mlflow-skinny==3.0.1",
+    "streamlit>=1.58.0",
 ]
