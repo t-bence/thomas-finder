@@ -1,0 +1,6 @@
+resources:
+  apps:
+    thomas_finder_app:
+      name: "thomas-finder-${bundle.target}"
+      description: "Thomas episode search — find episodes by story memory"
+      source_code_path: ../src/app

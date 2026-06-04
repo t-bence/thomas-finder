@@ -1,0 +1,61 @@
+resources:
+  jobs:
+    thomas_finder_job:
+      name: "[${bundle.target}] Thomas Finder - Process Episodes"
+
+      environments:
+        - environment_key: pipeline_env
+          spec:
+            environment_version: "4"
+            dependencies:
+              - databricks-vectorsearch
+
+      tasks:
+        - task_key: transcribe
+          description: "Auto Loader ingestion + Groq Whisper Large V3 → silver_transcripts"
+          spark_python_task:
+            python_file: ../src/pipeline/01_transcribe.py
+            parameters:
+              - ${var.catalog}
+              - ${var.schema}
+              - ${var.volume_name}
+          environment_key: pipeline_env
+
+        - task_key: clean
+          description: "LLM cleaning of transcripts → silver_transcripts_clean"
+          depends_on:
+            - task_key: transcribe
+          spark_python_task:
+            python_file: ../src/pipeline/02_clean.py
+            parameters:
+              - ${var.catalog}
+              - ${var.schema}
+              - ${var.volume_name}
+          environment_key: pipeline_env
+
+        - task_key: embed_and_store
+          description: "Stream cleaned transcripts → gold_episodes (one row per episode)"
+          depends_on:
+            - task_key: clean
+          spark_python_task:
+            python_file: ../src/pipeline/03_embed_and_store.py
+            parameters:
+              - ${var.catalog}
+              - ${var.schema}
+              - ${var.volume_name}
+          environment_key: pipeline_env
+
+        - task_key: setup_vector_search
+          description: "Create or sync managed-embedding Vector Search Delta Sync index"
+          depends_on:
+            - task_key: embed_and_store
+          spark_python_task:
+            python_file: ../src/pipeline/04_setup_vector_search.py
+            parameters:
+              - ${var.catalog}
+              - ${var.schema}
+          environment_key: pipeline_env
+
+      permissions:
+        - level: CAN_MANAGE_RUN
+          group_name: users

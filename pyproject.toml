@@ -1,0 +1,34 @@
+[project]
+name = "thomas-finder"
+version = "0.1.0"
+description = "Find Thomas the Tank Engine episodes by story memory"
+requires-python = ">=3.10"
+dependencies = [
+    "databricks-sdk>=0.114.0",
+]
+
+[project.optional-dependencies]
+pipeline = [
+    "databricks-vectorsearch",
+    "mlflow",
+    "pyspark>=3.5",
+]
+app = [
+    "streamlit",
+    "databricks-vectorsearch",
+    "mlflow",
+]
+dev = [
+    "thomas-finder[pipeline,app]",
+    "ruff",
+    "pytest",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I"]
+
+[dependency-groups]
+dev = [
+    "databricks-vectorsearch>=0.66",
+    "mlflow-skinny==3.0.1",
+]

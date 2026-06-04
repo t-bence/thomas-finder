@@ -1,0 +1,32 @@
+bundle:
+  name: thomas-finder
+
+include:
+  - resources/*.yml
+
+variables:
+  catalog:
+    description: Unity Catalog catalog name
+    default: workspace
+  schema:
+    description: Unity Catalog schema name
+    default: thomas
+  volume_name:
+    description: Volume name containing MP3 files
+    default: episodes
+
+targets:
+  dev:
+    default: true
+    mode: development
+    workspace:
+      host: https://dbc-1bff540e-abbc.cloud.databricks.com/
+    variables:
+      schema: thomas_dev
+
+  prod:
+    mode: production
+    workspace:
+      host: https://dbc-1bff540e-abbc.cloud.databricks.com/
+    variables:
+      schema: thomas
