@@ -6,41 +6,49 @@ One file per micro-batch (maxFilesPerTrigger=1) so that when Groq returns 429:
   - the rate-limited file is NOT checkpointed and will be retried on the next run
 """
 
-import inspect
-import os
+import logging
 import sys
 
 from databricks.sdk.runtime import dbutils
-
-sys.path.insert(0, os.path.dirname(os.path.abspath(inspect.getfile(inspect.currentframe()))))
-import config  # noqa: E402
-from logger import get_logger  # noqa: E402
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import (
-    col,
-    current_timestamp,
-    element_at,
-    regexp_extract,
-    udf,
-)
+from pyspark.sql.functions import col, current_timestamp, element_at, regexp_extract, udf
 from pyspark.sql.types import ArrayType, StringType
 
-spark = SparkSession.builder.getOrCreate()
-log = get_logger("transcribe")
+# --- config ---
+_args = sys.argv[1:]
+CATALOG_SCHEMA = _args[0]   # e.g. "workspace.thomas_dev"
+VOLUME_PATH = _args[1]
+SILVER_TABLE = _args[2]
+TRANSCRIBE_CHECKPOINT = f"{VOLUME_PATH}/_checkpoints/transcribe"
 
-log.info(
-    "Starting transcription task — catalog=%s schema=%s volume=%s",
-    config.CATALOG,
-    config.SCHEMA,
-    config.VOLUME_NAME,
+GROQ_SECRET_SCOPE = "Thomas"
+GROQ_SECRET_KEY = "Groq_key"
+WHISPER_MAX_FILES_PER_TRIGGER = 1
+GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+# Progressive back-off delays (seconds) on consecutive 429 responses.
+# After all retries are exhausted the UDF raises, the batch fails, and Auto
+# Loader will retry the same file on the next trigger run.
+_429_BACKOFFS = [10, 30, 120, 300]
+
+# --- logger ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+    stream=sys.stdout,
 )
-log.info("Source volume: %s", config.VOLUME_PATH)
+log = logging.getLogger("transcribe")
 
-spark.sql(f"CREATE SCHEMA IF NOT EXISTS `{config.CATALOG}`.`{config.SCHEMA}`")
+# --- main ---
+spark = SparkSession.builder.getOrCreate()
 
-if not spark.catalog.tableExists(config.SILVER_TABLE):
+log.info("Starting transcription task — volume=%s silver=%s", VOLUME_PATH, SILVER_TABLE)
+
+spark.sql(f"CREATE SCHEMA IF NOT EXISTS {CATALOG_SCHEMA}")
+
+if not spark.catalog.tableExists(SILVER_TABLE):
     spark.sql(f"""
-        CREATE TABLE IF NOT EXISTS {config.SILVER_TABLE} (
+        CREATE TABLE IF NOT EXISTS {SILVER_TABLE} (
             filename        STRING NOT NULL,
             series          STRING,
             episode         STRING,
@@ -50,28 +58,14 @@ if not spark.catalog.tableExists(config.SILVER_TABLE):
         USING DELTA
     """)
 
-log.info(
-    "Fetching Groq API key from secret scope='%s' key='%s'",
-    config.GROQ_SECRET_SCOPE,
-    config.GROQ_SECRET_KEY,
-)
-
+log.info("Fetching Groq API key from secret scope='%s' key='%s'", GROQ_SECRET_SCOPE, GROQ_SECRET_KEY)
 try:
-    _groq_key = dbutils.secrets.get(
-        scope=config.GROQ_SECRET_SCOPE, key=config.GROQ_SECRET_KEY
-    )
+    _groq_key = dbutils.secrets.get(scope=GROQ_SECRET_SCOPE, key=GROQ_SECRET_KEY)
     log.info("Groq API key loaded successfully")
 except Exception as e:
     raise RuntimeError(
-        f"Could not fetch Groq API key from secret '{config.GROQ_SECRET_SCOPE}/{config.GROQ_SECRET_KEY}': {e}"
+        f"Could not fetch Groq API key from secret '{GROQ_SECRET_SCOPE}/{GROQ_SECRET_KEY}': {e}"
     )
-
-GROQ_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
-
-# Progressive back-off delays (seconds) on consecutive 429 responses.
-# After all retries are exhausted the UDF raises, the batch fails, and Auto
-# Loader will retry the same file on the next trigger run.
-_429_BACKOFFS = [10, 30, 120, 300]
 
 
 @udf(returnType=StringType())
@@ -98,19 +92,14 @@ def transcribe_udf(content, path):
 
         if resp.status_code == 429:
             if attempt < len(_429_BACKOFFS):
-                wait = _429_BACKOFFS[attempt]
-                time.sleep(wait)
+                time.sleep(_429_BACKOFFS[attempt])
                 continue
-            # All retries exhausted — raise so the batch fails and the file
-            # stays uncheckpointed for the next run.
             raise RuntimeError(
                 f"Groq rate limit (429) on '{filename}' after {attempt + 1} attempts — will retry on next run"
             )
 
         if not resp.ok:
-            raise RuntimeError(
-                f"Groq {resp.status_code} on '{filename}': {resp.text[:300]}"
-            )
+            raise RuntimeError(f"Groq {resp.status_code} on '{filename}': {resp.text[:300]}")
 
         return resp.text.strip()
 
@@ -135,16 +124,17 @@ def parse_filename_udf(path):
 stream = (
     spark.readStream.format("cloudFiles")
     .option("cloudFiles.format", "binaryFile")
-    .option("cloudFiles.schemaLocation", config.TRANSCRIBE_CHECKPOINT + "/schema")
-    .option("cloudFiles.maxFilesPerTrigger", config.WHISPER_MAX_FILES_PER_TRIGGER)
+    .option("cloudFiles.schemaLocation", TRANSCRIBE_CHECKPOINT + "/schema")
+    .option("cloudFiles.maxFilesPerTrigger", WHISPER_MAX_FILES_PER_TRIGGER)
     .option("pathGlobFilter", "*.mp3")
-    .load(config.VOLUME_PATH)
+    .load(VOLUME_PATH)
 )
 
 parsed = stream.withColumn("_se", parse_filename_udf(col("path")))
 
 transcribed = (
-    parsed.withColumn("filename", regexp_extract(col("path"), r"[^/]+$", 0))
+    parsed
+    .withColumn("filename", regexp_extract(col("path"), r"[^/]+$", 0))
     .withColumn("series", element_at(col("_se"), 1))
     .withColumn("episode", element_at(col("_se"), 2))
     .withColumn("transcript_text", transcribe_udf(col("content"), col("path")))
@@ -153,11 +143,10 @@ transcribed = (
 )
 
 (
-    transcribed.writeStream.option(
-        "checkpointLocation", config.TRANSCRIBE_CHECKPOINT + "/data"
-    )
+    transcribed.writeStream
+    .option("checkpointLocation", TRANSCRIBE_CHECKPOINT + "/data")
     .trigger(availableNow=True)
-    .toTable(config.SILVER_TABLE)
+    .toTable(SILVER_TABLE)
     .awaitTermination()
 )
 

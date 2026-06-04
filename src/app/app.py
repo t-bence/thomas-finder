@@ -1,4 +1,5 @@
 import os
+
 import streamlit as st
 
 CATALOG = os.getenv("CATALOG", "main")
@@ -12,6 +13,7 @@ NUM_RESULTS = 5
 @st.cache_resource
 def get_vs_index():
     from databricks.vector_search.client import VectorSearchClient
+
     vsc = VectorSearchClient(disable_notice=True)
     return vsc.get_index(VS_ENDPOINT, VS_INDEX)
 
@@ -19,6 +21,7 @@ def get_vs_index():
 @st.cache_resource
 def get_embed_client():
     from mlflow.deployments import get_deploy_client
+
     return get_deploy_client("databricks")
 
 

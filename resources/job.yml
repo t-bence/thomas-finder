@@ -16,9 +16,9 @@ resources:
           spark_python_task:
             python_file: ../src/pipeline/01_transcribe.py
             parameters:
-              - ${var.catalog}
-              - ${var.schema}
-              - ${var.volume_name}
+              - "${var.catalog}.${var.schema}"
+              - "/Volumes/${var.catalog}/${var.schema}/${var.volume_name}"
+              - "`${var.catalog}`.`${var.schema}`.silver_transcripts"
           environment_key: pipeline_env
 
         - task_key: clean
@@ -28,32 +28,24 @@ resources:
           spark_python_task:
             python_file: ../src/pipeline/02_clean.py
             parameters:
-              - ${var.catalog}
-              - ${var.schema}
-              - ${var.volume_name}
-          environment_key: pipeline_env
-
-        - task_key: embed_and_store
-          description: "Stream cleaned transcripts → gold_episodes (one row per episode)"
-          depends_on:
-            - task_key: clean
-          spark_python_task:
-            python_file: ../src/pipeline/03_embed_and_store.py
-            parameters:
-              - ${var.catalog}
-              - ${var.schema}
-              - ${var.volume_name}
+              - "${var.catalog}.${var.schema}"
+              - "/Volumes/${var.catalog}/${var.schema}/${var.volume_name}"
+              - "`${var.catalog}`.`${var.schema}`.silver_transcripts"
+              - "`${var.catalog}`.`${var.schema}`.silver_transcripts_clean"
+              - "databricks-meta-llama-3-3-70b-instruct"
           environment_key: pipeline_env
 
         - task_key: setup_vector_search
           description: "Create or sync managed-embedding Vector Search Delta Sync index"
           depends_on:
-            - task_key: embed_and_store
+            - task_key: clean
           spark_python_task:
-            python_file: ../src/pipeline/04_setup_vector_search.py
+            python_file: ../src/pipeline/03_setup_vector_search.py
             parameters:
-              - ${var.catalog}
-              - ${var.schema}
+              - "`${var.catalog}`.`${var.schema}`.silver_transcripts_clean"
+              - "thomas-finder-vs"
+              - "${var.catalog}.${var.schema}.episode_chunks_index"
+              - "databricks-qwen3-embedding-0-6b"
           environment_key: pipeline_env
 
       permissions:
